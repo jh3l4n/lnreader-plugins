@@ -120,5 +120,3 @@ class DaoSupreme implements Plugin.PluginBase {
 }
 
 export default new DaoSupreme();
-      
-
