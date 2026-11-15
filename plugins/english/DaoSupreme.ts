@@ -8,8 +8,14 @@ class DaoSupreme implements Plugin.PluginBase {
   name = 'DaoSupreme';
   icon = 'src/en/divinedaolibrary/icon.png';
   site = 'https://daosupreme.com/';
-  version = '1.0.6';
+  version = '1.0.7';
   filters: Filters | undefined = undefined;
+
+  private toFullUrl(pathOrUrl: string): string {
+    if (!pathOrUrl) return this.site;
+    if (pathOrUrl.startsWith('http')) return pathOrUrl;
+    return `${this.site}${pathOrUrl.replace(/^\//, '')}`;
+  }
 
   async popularNovels(pageNo: number): Promise<Plugin.NovelItem[]> {
     const url = pageNo === 1 ? this.site : `${this.site}page/${pageNo}/`;
@@ -39,8 +45,8 @@ class DaoSupreme implements Plugin.PluginBase {
   }
 
   async parseNovel(novelUrl: string): Promise<Plugin.SourceNovel> {
-    const cleanUrl = novelUrl.replace(/\?.*$/, '');
-    const result = await fetchApi(cleanUrl);
+    const fullUrl = this.toFullUrl(novelUrl).replace(/\?.*$/, '');
+    const result = await fetchApi(fullUrl);
     const body = await result.text();
     const loadedCheerio = parseHTML(body);
 
@@ -59,7 +65,7 @@ class DaoSupreme implements Plugin.PluginBase {
       .join('\n\n');
 
     const novel: Plugin.SourceNovel = {
-      url: cleanUrl,
+      url: novelUrl,
       name: title,
       cover,
       summary,
@@ -68,8 +74,9 @@ class DaoSupreme implements Plugin.PluginBase {
 
     const pageText = loadedCheerio('body').text();
     const pageMatch = pageText.match(/Page\s+\d+\s+of\s+(\d+)/i);
-    const totalPagesStr = pageMatch ? pageMatch.at(1) : '1';
-    const totalPages = totalPagesStr ? parseInt(totalPagesStr, 10) : 1;
+    const totalPages = pageMatch
+      ? parseInt(pageMatch.join(',').replace(/^.*?,/, ''), 10) || 1
+      : 1;
 
     const chapters: Plugin.ChapterItem[] = [];
     const seenUrls = new Set<string>();
@@ -81,7 +88,6 @@ class DaoSupreme implements Plugin.PluginBase {
 
         if (
           href &&
-          href.startsWith('http') &&
           !href.includes('?cp=') &&
           !href.includes('#') &&
           text &&
@@ -91,7 +97,7 @@ class DaoSupreme implements Plugin.PluginBase {
           seenUrls.add(href);
           chapters.push({
             name: text,
-            url: href,
+            url: this.toFullUrl(href),
             releaseTime: '',
           });
         }
@@ -102,11 +108,11 @@ class DaoSupreme implements Plugin.PluginBase {
 
     for (let p = 2; p <= totalPages; p++) {
       try {
-        const pageRes = await fetchApi(`${cleanUrl}?cp=${p}`);
+        const pageRes = await fetchApi(`${fullUrl}?cp=${p}`);
         const pageHtml = await pageRes.text();
         extractChaptersFromPage(parseHTML(pageHtml));
       } catch (e) {
-        // Ignore single page errors
+        // Skip failed page
       }
     }
 
@@ -115,7 +121,8 @@ class DaoSupreme implements Plugin.PluginBase {
   }
 
   async parseChapter(chapterUrl: string): Promise<string> {
-    const result = await fetchApi(chapterUrl);
+    const fullUrl = this.toFullUrl(chapterUrl);
+    const result = await fetchApi(fullUrl);
     const body = await result.text();
     const loadedCheerio = parseHTML(body);
 
