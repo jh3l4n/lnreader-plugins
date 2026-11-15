@@ -7,8 +7,8 @@ class DaoSupreme implements Plugin.PluginBase {
   id = 'daosupreme';
   name = 'DaoSupreme';
   icon = 'src/en/divinedaolibrary/icon.png';
-    site = 'https://daosupreme.com';
-  version = '1.0.3';
+    site = 'https://daosupreme.com/';
+  version = '1.0.4';
   filters: Filters | undefined = undefined;
 
   async popularNovels(pageNo: number): Promise<Plugin.NovelItem[]> {
