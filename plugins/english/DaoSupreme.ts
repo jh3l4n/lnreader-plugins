@@ -7,8 +7,8 @@ class DaoSupreme implements Plugin.PluginBase {
   id = 'daosupreme';
   name = 'DaoSupreme';
   icon = 'src/en/divinedaolibrary/icon.png';
-    site = 'https://daosupreme.com/';
-  version = '1.0.4';
+  site = 'https://daosupreme.com/';
+  version = '1.0.5';
   filters: Filters | undefined = undefined;
 
   async popularNovels(pageNo: number): Promise<Plugin.NovelItem[]> {
@@ -39,14 +39,14 @@ class DaoSupreme implements Plugin.PluginBase {
   }
 
   async parseNovel(novelUrl: string): Promise<Plugin.SourceNovel> {
-    const cleanUrl = novelUrl.split('?');
+    const cleanUrl = novelUrl.split('?')[0];
     const result = await fetchApi(cleanUrl);
     const body = await result.text();
     const loadedCheerio = parseHTML(body);
 
     const title =
       loadedCheerio('h1').first().text().trim() ||
-      loadedCheerio('title').text().split('-').trim() ||
+      loadedCheerio('title').text().split('-')[0].trim() ||
       'DaoSupreme Novel';
 
     const coverEl = loadedCheerio('article img, .entry-content img, main img').first();
@@ -67,10 +67,9 @@ class DaoSupreme implements Plugin.PluginBase {
       chapters: [],
     };
 
-    // Detect total pages from "Page 1 of 7"
     const pageText = loadedCheerio('body').text();
     const pageMatch = pageText.match(/Page\s+\d+\s+of\s+(\d+)/i);
-    const totalPages = pageMatch ? parseInt(pageMatch, 10) : 1;
+    const totalPages = pageMatch && pageMatch[1] ? parseInt(pageMatch[1], 10) : 1;
 
     const chapters: Plugin.ChapterItem[] = [];
     const seenUrls = new Set<string>();
@@ -80,7 +79,6 @@ class DaoSupreme implements Plugin.PluginBase {
         const href = $(el).attr('href') || '';
         const text = $(el).text().trim();
 
-        // Match chapter buttons while ignoring Next/Previous pagination & social links
         if (
           href &&
           href.startsWith('http') &&
@@ -100,21 +98,18 @@ class DaoSupreme implements Plugin.PluginBase {
       });
     };
 
-    // Extract chapters from Page 1
     extractChaptersFromPage(loadedCheerio);
 
-    // Fetch remaining pages (Page 2 to totalPages)
     for (let p = 2; p <= totalPages; p++) {
       try {
         const pageRes = await fetchApi(`${cleanUrl}?cp=${p}`);
         const pageHtml = await pageRes.text();
         extractChaptersFromPage(parseHTML(pageHtml));
       } catch (e) {
-        // Ignore single page fetch errors and keep collected chapters
+        // Skip failed page and keep collected chapters
       }
     }
 
-    // Reverse so Chapter 1 is at the bottom/start in chronological order
     novel.chapters = chapters.reverse();
     return novel;
   }
