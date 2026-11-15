@@ -8,7 +8,7 @@ class DaoSupreme implements Plugin.PluginBase {
   name = 'DaoSupreme';
   icon = 'src/en/divinedaolibrary/icon.png';
   site = 'https://daosupreme.com/';
-  version = '1.0.5';
+  version = '1.0.6';
   filters: Filters | undefined = undefined;
 
   async popularNovels(pageNo: number): Promise<Plugin.NovelItem[]> {
@@ -39,14 +39,13 @@ class DaoSupreme implements Plugin.PluginBase {
   }
 
   async parseNovel(novelUrl: string): Promise<Plugin.SourceNovel> {
-    const cleanUrl = novelUrl.split('?')[0];
+    const cleanUrl = novelUrl.replace(/\?.*$/, '');
     const result = await fetchApi(cleanUrl);
     const body = await result.text();
     const loadedCheerio = parseHTML(body);
 
     const title =
       loadedCheerio('h1').first().text().trim() ||
-      loadedCheerio('title').text().split('-')[0].trim() ||
       'DaoSupreme Novel';
 
     const coverEl = loadedCheerio('article img, .entry-content img, main img').first();
@@ -69,7 +68,8 @@ class DaoSupreme implements Plugin.PluginBase {
 
     const pageText = loadedCheerio('body').text();
     const pageMatch = pageText.match(/Page\s+\d+\s+of\s+(\d+)/i);
-    const totalPages = pageMatch && pageMatch[1] ? parseInt(pageMatch[1], 10) : 1;
+    const totalPagesStr = pageMatch ? pageMatch.at(1) : '1';
+    const totalPages = totalPagesStr ? parseInt(totalPagesStr, 10) : 1;
 
     const chapters: Plugin.ChapterItem[] = [];
     const seenUrls = new Set<string>();
@@ -106,7 +106,7 @@ class DaoSupreme implements Plugin.PluginBase {
         const pageHtml = await pageRes.text();
         extractChaptersFromPage(parseHTML(pageHtml));
       } catch (e) {
-        // Skip failed page and keep collected chapters
+        // Ignore single page errors
       }
     }
 
