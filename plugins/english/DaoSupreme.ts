@@ -6,7 +6,7 @@ import { Filters } from '@libs/filterInputs';
 class DaoSupreme implements Plugin.PluginBase {
   id = 'daosupreme';
   name = 'DaoSupreme';
-  icon = 'src/en/daosupreme/icon.png';
+  icon = 'src/en/divinedaolibrary/icon.png';
   site = 'https://daosupreme.com/';
   version = '1.0.0';
   filters: Filters | undefined = undefined;
