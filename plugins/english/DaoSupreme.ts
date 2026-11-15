@@ -1,4 +1,4 @@
-import { CheerioAPI, load as parseHTML } from 'cheerio';
+import { load as parseHTML } from 'cheerio';
 import { fetchApi } from '@libs/fetch';
 import { Plugin } from '@typings/plugin';
 import { Filters } from '@libs/filterInputs';
@@ -7,12 +7,12 @@ class DaoSupreme implements Plugin.PluginBase {
   id = 'daosupreme';
   name = 'DaoSupreme';
   icon = 'src/en/divinedaolibrary/icon.png';
-  site = 'https://daosupreme.com/';
-  version = '1.0.0';
+  site = 'https://daosupreme.com';
+  version = '1.0.2';
   filters: Filters | undefined = undefined;
 
   async popularNovels(pageNo: number): Promise<Plugin.NovelItem[]> {
-    const url = `${this.site}page/${pageNo}/`;
+    const url = pageNo === 1 ? this.site : `${this.site}page/${pageNo}/`;
     const result = await fetchApi(url);
     const body = await result.text();
     const loadedCheerio = parseHTML(body);
@@ -20,10 +20,11 @@ class DaoSupreme implements Plugin.PluginBase {
     const novels: Plugin.NovelItem[] = [];
 
     loadedCheerio('article').each((i, el) => {
-      const linkEl = loadedCheerio(el).find('h2.entry-title a, h1.entry-title a, .entry-header a').first();
+      const linkEl = loadedCheerio(el).find('h2 a, h1 a, h3 a, .entry-title a').first();
       const name = linkEl.text().trim();
       const novelUrl = linkEl.attr('href');
-      const cover = loadedCheerio(el).find('img').first().attr('src') || '';
+      const imgEl = loadedCheerio(el).find('img').first();
+      const cover = imgEl.attr('data-src') || imgEl.attr('src') || '';
 
       if (name && novelUrl) {
         novels.push({
@@ -38,46 +39,83 @@ class DaoSupreme implements Plugin.PluginBase {
   }
 
   async parseNovel(novelUrl: string): Promise<Plugin.SourceNovel> {
-    const result = await fetchApi(novelUrl);
+    const cleanUrl = novelUrl.split('?');
+    const result = await fetchApi(cleanUrl);
     const body = await result.text();
     const loadedCheerio = parseHTML(body);
 
+    const title =
+      loadedCheerio('h1').first().text().trim() ||
+      loadedCheerio('title').text().split('-').trim() ||
+      'DaoSupreme Novel';
+
+    const coverEl = loadedCheerio('article img, .entry-content img, main img').first();
+    const cover = coverEl.attr('data-src') || coverEl.attr('src') || '';
+
+    const summary = loadedCheerio('.entry-content p, article p')
+      .filter((i, el) => !loadedCheerio(el).text().includes('Page 1 of'))
+      .slice(0, 3)
+      .map((i, el) => loadedCheerio(el).text().trim())
+      .get()
+      .join('\n\n');
+
     const novel: Plugin.SourceNovel = {
-      url: novelUrl,
-      name: loadedCheerio('h1.entry-title').first().text().trim() || 'Untitled',
-      cover: loadedCheerio('article img, .post-thumbnail img').first().attr('src') || '',
-      summary: loadedCheerio('.entry-content p').first().text().trim(),
+      url: cleanUrl,
+      name: title,
+      cover,
+      summary,
       chapters: [],
     };
 
+    // Detect total pages from "Page 1 of 7"
+    const pageText = loadedCheerio('body').text();
+    const pageMatch = pageText.match(/Page\s+\d+\s+of\s+(\d+)/i);
+    const totalPages = pageMatch ? parseInt(pageMatch, 10) : 1;
+
     const chapters: Plugin.ChapterItem[] = [];
-    const pageLinks = new Set<string>();
-    pageLinks.add(novelUrl);
+    const seenUrls = new Set<string>();
 
-    loadedCheerio('a[href*="?cp="]').each((i, el) => {
-      const href = loadedCheerio(el).attr('href');
-      if (href) {
-        const fullUrl = href.startsWith('http') ? href : `${this.site}${href.replace(/^\//, '')}`;
-        pageLinks.add(fullUrl);
-      }
-    });
+    const extractChaptersFromPage = ($: ReturnType<typeof parseHTML>) => {
+      $('.entry-content a, article a').each((i, el) => {
+        const href = $(el).attr('href') || '';
+        const text = $(el).text().trim();
 
-    let index = 1;
-    for (const link of Array.from(pageLinks)) {
-      const cpMatch = link.match(/\?cp=(\d+)/);
-      const chapterNum = cpMatch ? parseInt(cpMatch[1], 10) : index;
-      chapters.push({
-        name: `Chapter / Part ${chapterNum}`,
-        url: link,
-        releaseTime: '',
-        chapterNumber: chapterNum,
+        // Match chapter buttons while ignoring Next/Previous pagination & social links
+        if (
+          href &&
+          href.startsWith('http') &&
+          !href.includes('?cp=') &&
+          !href.includes('#') &&
+          text &&
+          /chapter/i.test(text) &&
+          !seenUrls.has(href)
+        ) {
+          seenUrls.add(href);
+          chapters.push({
+            name: text,
+            url: href,
+            releaseTime: '',
+          });
+        }
       });
-      index++;
+    };
+
+    // Extract chapters from Page 1
+    extractChaptersFromPage(loadedCheerio);
+
+    // Fetch remaining pages (Page 2 to totalPages)
+    for (let p = 2; p <= totalPages; p++) {
+      try {
+        const pageRes = await fetchApi(`${cleanUrl}?cp=${p}`);
+        const pageHtml = await pageRes.text();
+        extractChaptersFromPage(parseHTML(pageHtml));
+      } catch (e) {
+        // Ignore single page fetch errors and keep collected chapters
+      }
     }
 
-    chapters.sort((a, b) => (a.chapterNumber || 0) - (b.chapterNumber || 0));
-    novel.chapters = chapters;
-
+    // Reverse so Chapter 1 is at the bottom/start in chronological order
+    novel.chapters = chapters.reverse();
     return novel;
   }
 
@@ -86,10 +124,10 @@ class DaoSupreme implements Plugin.PluginBase {
     const body = await result.text();
     const loadedCheerio = parseHTML(body);
 
-    loadedCheerio('.entry-content script, .entry-content style, .entry-content .sharedaddy').remove();
-    const chapterText = loadedCheerio('.entry-content').html() || '';
+    const content = loadedCheerio('.entry-content, article .post-content, main article').first();
+    content.find('script, style, ins, .sharedaddy, .code-block, nav, .page-links, .wp-block-buttons').remove();
 
-    return chapterText;
+    return content.html() || '<p>No text found. Try opening in WebView.</p>';
   }
 
   async searchNovels(searchTerm: string, pageNo: number): Promise<Plugin.NovelItem[]> {
@@ -101,10 +139,11 @@ class DaoSupreme implements Plugin.PluginBase {
     const novels: Plugin.NovelItem[] = [];
 
     loadedCheerio('article').each((i, el) => {
-      const linkEl = loadedCheerio(el).find('h2.entry-title a, .entry-header a').first();
+      const linkEl = loadedCheerio(el).find('h2 a, h1 a, h3 a, .entry-title a').first();
       const name = linkEl.text().trim();
       const novelUrl = linkEl.attr('href');
-      const cover = loadedCheerio(el).find('img').first().attr('src') || '';
+      const imgEl = loadedCheerio(el).find('img').first();
+      const cover = imgEl.attr('data-src') || imgEl.attr('src') || '';
 
       if (name && novelUrl) {
         novels.push({
